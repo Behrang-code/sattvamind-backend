@@ -1,45 +1,51 @@
 export default async function handler(req, res) {
-  res.setHeader("Access-Control-Allow-Origin", "*");
-  res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
-
-  if (req.method === "OPTIONS") {
-    return res.status(200).end();
-  }
-
   if (req.method !== "POST") {
     return res.status(405).json({ error: "Solo POST ammesso" });
   }
 
-  const { message } = req.body;
+  const { message, user_id } = req.body;
 
-  if (!process.env.OPENAI_API_KEY) {
-    return res.status(500).json({ error: "API key non trovata nel server" });
+  if (!process.env.OPENAI_API_KEY || !process.env.SUPABASE_URL || !process.env.SUPABASE_ANON_KEY) {
+    return res.status(500).json({ error: "Variabili ambientali mancanti" });
   }
 
-  const response = await fetch("https://api.openai.com/v1/chat/completions", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "Authorization": "Bearer " + process.env.OPENAI_API_KEY
-    },
-    body: JSON.stringify({
-      model: "gpt-3.5-turbo",
-      messages: [
-        {
-          role: "system",
-          content: "Sei SattvaMind, una guida gentile e riflessiva. Le tue risposte sono ispirate a una visione dello yoga naturale, non dogmatica e radicata nell’ascolto del corpo. Non parli di controllo del respiro, ma di comprensione e fiducia nei segnali naturali del corpo. Rispondi in modo semplice, rispettoso e profondo, senza concetti rigidi o tecnicismi. Aiuti le persone a ritrovare armonia con sé stesse attraverso consapevolezza e semplicità."
-        },
-        {
-          role: "user",
-          content: message
-        }
-      ],
-      temperature: 0.6
-    })
-  });
+  try {
+    const response = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": "Bearer " + process.env.OPENAI_API_KEY
+      },
+      body: JSON.stringify({
+        model: "gpt-3.5-turbo",
+        messages: [
+          { role: "system", content: "Sei SattvaMind, una guida calma e riflessiva. Usa parole semplici, pacate, ispirate alla filosofia dello yoga e all’ascolto del corpo." },
+          { role: "user", content: message }
+        ],
+        temperature: 0.6
+      })
+    });
 
-  const data = await response.json();
+    const data = await response.json();
+    const reply = data.choices[0].message.content;
 
-  res.status(200).json({ reply: data.choices[0].message.content });
+    // Salva nel database Supabase
+    await fetch(`${process.env.SUPABASE_URL}/rest/v1/messages`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "apikey": process.env.SUPABASE_ANON_KEY,
+        "Authorization": "Bearer " + process.env.SUPABASE_ANON_KEY,
+        "Prefer": "return=minimal"
+      },
+      body: JSON.stringify([
+        { user_id, role: "user", content: message },
+        { user_id, role: "assistant", content: reply }
+      ])
+    });
+
+    res.status(200).json({ reply });
+  } catch (err) {
+    res.status(500).json({ error: "Errore nella risposta del server" });
+  }
 }
